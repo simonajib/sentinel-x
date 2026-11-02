@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       // xfwd: the backend uses X-Forwarded-For for login rate limiting.
-      '/api': { target: 'http://127.0.0.1:3001', xfwd: true },
+      '/api': { target: process.env.VITE_BACKEND_URL ?? 'http://127.0.0.1:3001', xfwd: true },
     },
   },
 })

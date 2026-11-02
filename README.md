@@ -25,13 +25,16 @@ le backend MQTT/SQLite, le flux SSE existant et le relais MJPEG authentifie.
 Pour Windows, executer depuis la racine :
 
 ```powershell
-.\scripts\setup-windows.ps1
+.\install.ps1
+.\run.ps1
 ```
 
-Les commandes de lancement dans trois terminaux, l'entrainement reel ou de
-demonstration et les tests sont dans [ai/README.md](ai/README.md).
-Le script ne demarre aucune simulation. Les scripts Bash ci-dessous restent le
-mode de test historique avec donnees fictives.
+Le lancement inclut MQTT, l'IA, Express, Vite et la passerelle USB pour les
+mesures reelles. La webcam se controle depuis le dashboard. Arreter avec
+`.\stop.ps1`. Si PowerShell bloque un script, utiliser par exemple
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1`.
+Les lanceurs Bash proposent le meme fonctionnement. L'entrainement reel ou de
+demonstration et le lancement manuel avance sont dans [ai/README.md](ai/README.md).
 
 Architecture et limites : [docs/AI_IMPLEMENTATION.md](docs/AI_IMPLEMENTATION.md).
 Inventaire des fichiers : [docs/AI_FILES.md](docs/AI_FILES.md).
@@ -43,7 +46,10 @@ boitier sur le port serie USB. La passerelle les transmet au MQTT existant :
 **ESP USB -> passerelle Python -> MQTT -> Express -> SQLite/SSE -> React**.
 Le navigateur continue a communiquer uniquement avec Express.
 
-Depuis la racine, avec le broker, le backend et le frontend demarres :
+`run.ps1` ou `bash run.sh` demarre deja la passerelle avec detection automatique
+du port USB. Pour choisir une carte, utiliser `.\run.ps1 -Port COM7` ou
+`bash run.sh --port COM7`. Pour lancer la passerelle manuellement, demarrer
+d'abord la stack avec `-NoEsp` / `--no-esp`, puis depuis la racine :
 
 ```powershell
 .\ai\.venv\Scripts\python.exe -m pip install -r .\scripts\requirements-esp.txt
@@ -153,8 +159,9 @@ des fichiers modifiés : [docs/FACE_RECOGNITION.md](docs/FACE_RECOGNITION.md).
 brew install node
 ```
 
-Node.js 22.13 ou plus recent est requis (module `node:sqlite` utilise pour les comptes). Si Node.js est deja installe avec une
-version compatible, conserver cette installation. `lsof` est fourni avec macOS.
+Node.js 22.13 ou plus recent est requis (module `node:sqlite` utilise pour les
+comptes), ainsi que Python 3.12. Si ces outils sont deja installes avec une
+version compatible, conserver ces installations. Les lanceurs ne demandent pas `lsof`.
 
 3. Cloner le depot, puis ouvrir un terminal a sa racine (le dossier contenant ce README).
 4. Lancer le script d'installation :
@@ -163,23 +170,34 @@ version compatible, conserver cette installation. `lsof` est fourni avec macOS.
 bash install.sh
 ```
 
-Le script verifie les prerequis, installe Mosquitto et ses clients via Homebrew
-s'ils sont absents, puis execute `npm ci` dans le backend et le frontend a partir
-de leurs fichiers de verrouillage. Il ne demarre aucun service. Une connexion
-Internet est necessaire pour telecharger les paquets. Le script peut etre relance
-apres une mise a jour du depot ; `npm ci` recree les dependances locales.
+Les scripts PowerShell et Bash utilisent le meme installateur
+`scripts/project.mjs`. Il verifie les prerequis, installe Mosquitto via Homebrew
+sur macOS si necessaire, execute `npm ci` dans les deux projets web et cree
+`ai/.venv` avec les dependances IA/vision et USB. Il initialise les `.env`
+manquants et conserve la configuration existante. Aucun service ne demarre
+pendant l'installation. Une connexion Internet est necessaire pour les paquets.
+Arreter la stack avant de relancer l'installation apres une mise a jour.
 
-Sur Linux, installer Node.js, npm, `lsof`, Mosquitto et ses clients avec le
-gestionnaire de paquets du systeme avant de lancer `bash install.sh`.
+Sur Windows, utiliser `.\install.ps1` et installer Mosquitto au prealable.
+Sur Linux, installer Node.js, npm, Python 3.12 et Mosquitto avec le gestionnaire
+de paquets du systeme. `MOSQUITTO_PATH` permet de choisir un executable local.
+
+| Option PowerShell | Option Bash | Effet |
+| --- | --- | --- |
+| `-CoreOnly` | `--core-only` | IA capteurs, sans dependances de vision |
+| `-WithTests` | `--with-tests` | Ajoute les dependances de test Python |
+| `-FaceModels` | `--face-models` | Telecharge et verifie les modeles faciaux officiels |
+| `-SkipNodeInstall` | `--skip-node-install` | Conserve les dependances Node deja installees |
+| `-SkipPythonInstall` | `--skip-python-install` | Conserve les dependances Python deja installees |
 
 ## Structure Du Projet
 
 - `iot-backend/` : API Express, MQTT, historique SQLite, voir [iot-backend/README.md](iot-backend/README.md).
 - `iot-frontend/` : application React/Vite (pages Metriques et Camera), voir [iot-frontend/README.md](iot-frontend/README.md).
-- `firmware/` : firmware ESP8266 actuel (PlatformIO, capteurs/OLED et sortie serie USB).
-- `firmware-old/` : ancienne version reseau ; le flux USB actuel ne l'utilise pas.
+- `firmware/` : firmware ESP8266 actif (PlatformIO, capteurs/OLED et sortie serie USB), compilation verifiee.
+- `firmware-old/` : archive reseau non maintenue, incompatible avec la chaine USB actuelle.
 - `scripts/esp_serial_bridge.py` : passerelle des mesures serie vers le backend MQTT.
-- `install.sh`, `run.sh`, `stop.sh` : installation, demarrage et arret.
+- `install.ps1`, `run.ps1`, `stop.ps1` et leurs equivalents `.sh` : installation, demarrage et arret via `scripts/project.mjs`.
 - `docker-compose.yml` : stack web conteneurisee (voir [Docker](#docker)).
 
 ## Architecture
@@ -210,41 +228,63 @@ Webcam serveur --> OpenCV / YOLO / ByteTrack / YuNet / SFace --> MJPEG via Expre
 
 Depuis la racine du depot :
 
+```powershell
+.\run.ps1
+```
+
+Ou sous Bash :
+
 ```sh
 bash run.sh
 ```
 
-Le script lance le **mode test local sans carte IoT** : Mosquitto, le backend,
-Vite et un simulateur en arriere-plan. Le backend et le frontend se rechargent
-lors des modifications. Le simulateur (`iot-backend/src/tools/`) joue une scene
-coherente :
+Le mode par defaut utilise les **mesures reelles** : Mosquitto, service IA
+Python, backend Express, frontend Vite et passerelle USB en arriere-plan.
+Brancher l'ESP et fermer son moniteur serie ; la passerelle attend/reconnecte
+la carte et detecte automatiquement l'unique port USB plausible. La webcam
+demarre depuis la page Camera du dashboard.
 
-- mesures toutes les deux secondes (temperature et humidite qui derivent, pic
-  de gaz toutes les 4 minutes, passage d'une personne 20 s par minute) ;
-- au demarrage, publication horodatee des 5 dernieres minutes manquantes, pour
-  que les graphiques soient remplis tout de suite (meme mecanisme que le rejeu
-  du firmware) ;
-- flux camera simule sur http://127.0.0.1:8090/stream.mjpg (silhouette dans un
-  cadre vert si le visage est reconnu, rouge sinon) et detections publiees sur
-  `sentinel/vision` ;
-- reception des commandes LED ON/OFF, sans action physique.
+| Option PowerShell | Option Bash | Effet |
+| --- | --- | --- |
+| `-Port COM7` | `--port COM7` | Choisit le port serie de l'ESP |
+| `-NoEsp` | `--no-esp` | Lance MQTT, IA et web sans la passerelle USB |
+| `-Simulate` | `--simulate` | Demonstration sans carte avec capteurs et camera fictifs |
 
-La connexion MQTT est reelle, mais les capteurs, la carte et la camera sont
-simules.
+La simulation est explicite, par exemple `.\run.ps1 -Simulate` ou
+`bash run.sh --simulate`. Elle conserve un vrai service IA et la connexion
+MQTT ; le simulateur historique publie les mesures et detections fictives,
+sert son MJPEG sur http://127.0.0.1:8090/stream.mjpg et journalise les commandes
+LED sans action physique. Les e-mails vont dans `.runtime/mail/`.
+Arreter la stack avant de changer de mode. `-Simulate` / `--simulate` ne se
+combine pas avec les options de passerelle USB.
 
 - Dashboard : http://127.0.0.1:5173 (connexion requise, voir ci-dessous)
 - API : http://127.0.0.1:3001/api/status
 - Broker MQTT : `mqtt://127.0.0.1:1883`
-- Journaux : `.runtime/mosquitto.log`, `.runtime/backend.log`, `.runtime/frontend.log`.
-- Mesures et commandes simulees : `.runtime/simulator.log`.
+- IA : http://127.0.0.1:8001/health
+- Journaux : `.runtime/supervisor.log`, `.runtime/mosquitto.log`, `.runtime/ai.log`, `.runtime/backend.log`, `.runtime/frontend.log` et `.runtime/esp-bridge.log`.
+- En simulation : `.runtime/simulator.log` et `.runtime/mail/`.
 
-Les ports `1883`, `3001`, `5173` et `8090` sont fixes pour ces scripts. Un service deja
-present sur l'un de ces ports est reutilise : verifier qu'il s'agit bien du
-service attendu. Les scripts peuvent aussi etre appeles depuis un autre dossier.
+Les valeurs ci-dessus sont les ports par defaut. `FRONTEND_PORT`, `PORT` du
+backend et `AI_PORT` sont configurables ; `AI_SERVICE_URL` doit correspondre
+a `AI_HOST` / `AI_PORT`, et les tokens IA doivent correspondre. Les fichiers
+locaux sont `iot-backend/.env` et `ai/.env` ; les variables du terminal ont
+priorite. Un service existant reconnu et disponible peut etre reutilise ;
+un port occupe par un service incompatible provoque une erreur explicite.
+Les chemins sont ancres au depot, meme si un lanceur est appele depuis un autre dossier.
+
+```powershell
+node .\scripts\project.mjs status
+.\stop.ps1
+```
 
 ```sh
 bash stop.sh
 ```
+
+Le superviseur local authentifie arrete uniquement les processus qu'il a
+lances, avec leurs descendants. Les services reutilises restent actifs.
+Les PID, l'etat du superviseur et les journaux sont ignores par Git.
 
 ## Authentification
 
@@ -262,8 +302,10 @@ npm --prefix iot-backend run user:create -- operateur@aethercorp.test "Operateur
 
 - Les comptes sont stockes dans `iot-backend/data/auth.db` (SQLite, ignore par
   Git, mots de passe hashes en scrypt). Les tables sont creees au demarrage.
-- `run.sh` genere au premier lancement le secret de session dans
-  `.runtime/auth-secret`. Le supprimer invalide toutes les sessions.
+- L'installation genere le secret de session `BETTER_AUTH_SECRET` dans
+  `iot-backend/.env` s'il manque, en reprenant l'ancien `.runtime/auth-secret`
+  lorsqu'il existe. Modifier ce secret invalide les sessions. La commande
+  `user:create` charge elle aussi ce `.env`.
 - Sessions de 8 heures. Connexion limitee a 5 tentatives par minute et par IP
   (HTTP `429` au-dela).
 - Les requetes d'authentification venant d'une origine absente de
@@ -280,32 +322,30 @@ curl -c /tmp/sentinel-cookies -H 'Origin: http://127.0.0.1:5173' \
 
 Les exemples `curl` suivants utilisent ensuite `-b /tmp/sentinel-cookies`.
 
-L'arret concerne uniquement les processus lances par `run.sh`, y compris leurs
-sous-processus. Les services demarres manuellement ou via Homebrew sont laisses
-intacts ; les arreter dans leurs terminaux avec Ctrl+C si necessaire. Les PID et
-journaux locaux sont ignores par Git. Ne pas lancer les scripts simultanement.
+Les services demarres manuellement ou via Homebrew restent actifs apres
+`stop.ps1` / `stop.sh` ; les arreter dans leurs terminaux avec Ctrl+C si necessaire.
 
 ## Tester Les Mesures
 
-Une fois les services demarres, les mesures simulees apparaissent automatiquement.
-Pour publier ponctuellement une valeur manuelle (remplacee par la prochaine
-mesure du simulateur) :
+Par defaut, les mesures apparaissent lorsque l'ESP connecte fournit ses trames
+USB. Avec `-Simulate` / `--simulate`, elles sont fictives et automatiques.
+Pour publier ponctuellement une mesure de demonstration explicitement marquee :
 
 ```sh
 mosquitto_pub -h 127.0.0.1 -t esp8266/donnees \
-	-m '{"temperature":22.5,"humidity":48,"gas":120,"presence":true}'
+	-m '{"temperature":22.5,"humidity":48,"gas":120,"presence":true,"source":"simulation"}'
 ```
 
-Le dashboard doit afficher ces valeurs en temps reel (graphiques et tableaux
-mis a jour par Server-Sent Events).
+Le dashboard conserve ces valeurs dans l'historique et les transmet par SSE
+avec leur origine simulation ; elles ne remplacent pas l'etat des capteurs physiques.
 
 ```sh
 curl -b /tmp/sentinel-cookies http://127.0.0.1:5173/api/status
 curl -b /tmp/sentinel-cookies 'http://127.0.0.1:5173/api/readings?limit=20'
 ```
 
-La reponse de `/api/status` doit contenir `mqttConnected: true`, un
-`lastMessageAt` renseigne et les valeurs dans `telemetry`. Chaque mesure est
+Avec un ESP reel connecte, `/api/status` doit contenir `mqttConnected: true`,
+un `lastMessageAt` renseigne et les valeurs physiques dans `telemetry`. Chaque mesure est
 enregistree dans `iot-backend/data/telemetry.db` (SQLite) et conservee 7 jours
 (`READINGS_RETENTION_DAYS`). Les champs sont optionnels ; les mesures doivent
 etre des nombres finis et `presence` un booleen. Le champ `ts` (epoch en
@@ -335,7 +375,7 @@ Un ancien service vision externe reste compatible avec ce contrat :
   `name` vaut `null` pour un visage inconnu (signale en alerte sur la page),
   `confidence` est compris entre 0 et 1, `ts` et `persons` sont optionnels.
 
-En mode test local, le simulateur publie des detections fictives. Hors simulation,
+En mode `-Simulate` / `--simulate`, le simulateur publie des detections fictives. Hors simulation,
 si `VISION_STREAM_URL` est omis, Express utilise le flux du service IA configure
 par `AI_SERVICE_URL` ; une valeur `VISION_STREAM_URL` vide desactive le flux.
 
@@ -356,7 +396,7 @@ curl -i -b /tmp/sentinel-cookies http://127.0.0.1:5173/api/action \
 ```
 
 L'API doit repondre HTTP `202` et l'abonne afficher `esp8266/led ON`.
-Le simulateur journalise aussi `Commande LED simulee : ON` dans
+En mode `-Simulate` / `--simulate`, le simulateur journalise `Commande LED simulee : ON` dans
 `.runtime/simulator.log`.
 La commande MQTT est une chaine `ON` ou `OFF`, pas un objet JSON.
 Cela confirme la publication, pas l'execution physique par une carte.
@@ -380,13 +420,16 @@ python firmware/tests/run_native.py
 python -m unittest discover -s scripts/tests -v
 (cd ai && python -m pytest -q)
 python scripts/check-repository.py
+node scripts/check-launcher.mjs
 ```
 
 Les tests couvrent les regles du domaine, les cas d'usage (avec de faux
 adaptateurs), le parsing des messages MQTT, le depot SQLite et la passerelle USB ;
 ils ne necessitent ni broker ni carte. Le runner C++ utilise g++, clang++ ou Zig
 pour tester le firmware avec des doubles materiels ; `pio run` compile pour
-l'ESP8266 sans flasher la carte. Les commandes de publication
+l'ESP8266 actif sans flasher la carte. `check-launcher.mjs` verifie les lanceurs
+avec des services isoles et leur arret ; il demande Mosquitto et les dependances
+locales installees. Les commandes de publication
 et d'abonnement ci-dessus servent aux tests manuels d'integration.
 
 ## Notifications Par E-mail
@@ -406,7 +449,7 @@ Les notifications sont uniquement envoyees par e-mail.
 - L'envoi passe par SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`,
   `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`), STARTTLS exige hors TLS
   implicite. Sans serveur SMTP, la page le signale et aucun e-mail ne part.
-- En mode test local (`run.sh`), les e-mails ne sont pas envoyes mais ecrits
+- En mode simulation (`run.ps1 -Simulate` ou `run.sh --simulate`), les e-mails sont ecrits
   dans `.runtime/mail/` (fichiers `.eml`, lisibles avec un client mail).
 - Les parametres sont stockes dans `iot-backend/data/settings.db`.
 
@@ -445,10 +488,10 @@ Arreter le simulateur avant de recevoir les mesures reelles pour ne pas melanger
 leurs origines. Les LEDs et le buzzer sont commandes localement par le firmware ;
 les boutons LED du dashboard necessitent un firmware MQTT compatible.
 
-`firmware-old/` conserve l'ancienne variante reseau. Son utilisation demande
-une configuration Wi-Fi, un broker accessible, ses certificats et identifiants ;
-elle n'est pas utilisee par la passerelle USB actuelle.
+`firmware-old/` conserve une archive de l'ancienne variante reseau, non maintenue
+et incompatible avec la chaine USB actuelle. Utiliser `firmware/` pour la carte actuelle.
 
 La configuration du backend par variables d'environnement est detaillee dans
-[iot-backend/README.md](iot-backend/README.md). Pour personnaliser les ports ou
-topics, demarrer les services manuellement plutot qu'avec les scripts locaux.
+[iot-backend/README.md](iot-backend/README.md). Les lanceurs lisent cette
+configuration ; un broker MQTT personnalise doit etre disponible au lancement.
+Utiliser `-NoEsp` / `--no-esp` si ce broker exige une authentification ou TLS.

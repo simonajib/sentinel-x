@@ -40,13 +40,28 @@ pour les capteurs ou le simulateur. Telecharger Mosquitto depuis
 Depuis la racine, PowerShell :
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1
+.\install.ps1
 ```
 
-Ce script lance `npm ci` dans les deux projets, cree `ai/.venv`, installe les
-requirements et cree les `.env` absents. Le secret Better Auth est genere
-localement sans affichage. Les fichiers existants sont conserves. Aucun
-service ou simulateur ne demarre automatiquement.
+Si PowerShell bloque le script :
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Le lanceur utilise `scripts/project.mjs`, comme `bash install.sh`. Il lance
+`npm ci` dans les deux projets, cree `ai/.venv`, installe les dependances
+IA/vision et USB et cree les `.env` absents. Le secret Better Auth manquant
+est genere dans `iot-backend/.env`, en reprenant l'ancien
+`.runtime/auth-secret` s'il existe. Les autres valeurs existantes sont
+conservees. Aucun service ou simulateur ne demarre pendant l'installation.
+
+Options : `-CoreOnly` (`--core-only`) pour les capteurs sans vision,
+`-WithTests` (`--with-tests`) pour pytest, `-FaceModels` (`--face-models`)
+pour telecharger et verifier les modeles YuNet/SFace. `-SkipNodeInstall` /
+`--skip-node-install` et `-SkipPythonInstall` / `--skip-python-install`
+conservent les dependances deja installees. L'ancien
+`scripts/setup-windows.ps1` reste un point d'entree compatible.
 
 Installation Python manuelle equivalente :
 
@@ -55,7 +70,7 @@ Set-Location .\ai
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
 L'activation est facultative. Si souhaitee :
@@ -65,14 +80,55 @@ L'activation est facultative. Si souhaitee :
 ```
 
 Sans webcam, installer `requirements-core.txt` ou utiliser
-`setup-windows.ps1 -CoreOnly`. La vision importe ses dependances uniquement
+`.\install.ps1 -CoreOnly` depuis la racine. La vision importe ses dependances uniquement
 lors du demarrage de la camera. `requirements-test.txt` ajoute pytest.
 `requirements-lock.txt` epingle les dependances de vision et de test pour
 reproduire l'environnement Python.
 
 ## Lancement du projet complet
 
-Executer d'abord le script d'installation. Ouvrir trois terminaux PowerShell.
+Apres l'installation, depuis la racine :
+
+```powershell
+# Premiere fois seulement : compte local, mot de passe demande.
+npm --prefix iot-backend run user:create -- operateur@sentinel.test "Operateur"
+.\run.ps1
+node .\scripts\project.mjs status
+```
+
+La commande de creation du compte charge `iot-backend/.env`. Le lanceur
+demarre MQTT, le service IA reel, Express, Vite et la passerelle USB, avec
+detection automatique du port de l'ESP. La webcam reste controlee depuis
+le dashboard. Utiliser `-Port COM7` pour choisir la carte ou `-NoEsp` pour
+lancer sans passerelle. Sous Bash : `bash run.sh`, `--port COM7` et `--no-esp`.
+Les chemins sont ancres au depot ; les scripts peuvent etre appeles depuis
+un autre dossier.
+
+Le mode demonstration est explicite : `.\run.ps1 -Simulate` ou
+`bash run.sh --simulate`. Il utilise le simulateur historique de capteurs
+et camera fictifs, un vrai service IA et un outbox d'e-mails local
+`.runtime/mail/`. Arreter avant de changer de mode ; ne pas combiner
+la simulation avec les options de passerelle USB.
+
+Arret : `.\stop.ps1` ou `bash stop.sh`. Le superviseur local authentifie
+arrete uniquement ses propres processus et leurs descendants ; les services
+existants qu'il a reutilises restent actifs. Les journaux se trouvent dans
+`.runtime/supervisor.log`, `.runtime/ai.log`, `.runtime/backend.log`,
+`.runtime/frontend.log`, `.runtime/mosquitto.log` et `.runtime/esp-bridge.log`
+(plus `.runtime/simulator.log` en demonstration).
+
+Dashboard : http://127.0.0.1:5173 ; backend : http://127.0.0.1:3001 ; IA :
+http://127.0.0.1:8001. Les ports peuvent etre personnalises avec
+`FRONTEND_PORT`, le `PORT` du backend et `AI_PORT` ; garder `AI_SERVICE_URL`
+coherent avec `AI_HOST` / `AI_PORT` et le meme `AI_SERVICE_TOKEN` dans les
+deux services. Le lanceur lit `iot-backend/.env` et `ai/.env`, avec priorite
+aux variables du terminal. Sans modele Isolation Forest, l'IA est ONLINE
+avec une analyse environnementale non entrainee/degradee.
+
+### Lancement manuel avance
+
+Pour executer chaque service dans son propre terminal, utiliser les commandes
+suivantes a la place du lanceur.
 
 **Terminal backend** :
 
@@ -206,9 +262,11 @@ commandes de demarrage, les controles DHT et la procedure de test complete.
 
 ## Demonstration sans ESP8266
 
-Mode explicite, dans un terminal dedie. Arreter tout autre simulateur pour
-ne pas melanger les scenarios. `run.sh` lance l'ancien simulateur complet et
-sa camera fictive : ne pas l'utiliser pour cette demonstration de webcam reelle.
+Variante manuelle avec le simulateur Python et une webcam reelle : lancer
+MQTT, Express et Vite selon les commandes avancees, en gardant l'IA arretee
+avant la commande ci-dessous. Arreter tout autre simulateur pour ne pas
+melanger les scenarios. `run.ps1 -Simulate` / `run.sh --simulate` propose
+une autre demonstration avec capteurs et camera fictifs.
 
 Creer et entrainer un **modele de demonstration distinct** :
 
@@ -465,6 +523,7 @@ Set-Location ai
 .\.venv\Scripts\python.exe -m pip install -r requirements-test.txt
 .\.venv\Scripts\python.exe -m pytest -q
 Set-Location ..
+node .\scripts\check-launcher.mjs
 node .\scripts\check-ai-integration.mjs
 node .\scripts\check-face-enrollment.mjs
 ```
@@ -478,6 +537,9 @@ et SSE. L'integration lance un Python temporaire et utilise de vrais appels
 HTTP, parsing telemetrie, persistance et SSE ; aucun capteur, webcam ou broker
 n'est necessaire pour ces tests.
 
+`check-launcher.mjs` verifie le demarrage et l'arret des lanceurs avec des
+services isoles ; il ne touche pas aux services deja lances dans le projet.
+
 `check-face-enrollment.mjs` utilise le frontend et Express compilés, un FastAPI
 temporaire, des photos synthétiques et un backend facial factice. Il vérifie le
 formulaire navigateur, la session, l'envoi via Express, les JPEG enregistrés,
@@ -490,8 +552,8 @@ aucune photo connue réelle et ne mesure pas la précision biométrique.
 
 - `Activate.ps1` bloque : utiliser directement `.venv\Scripts\python.exe`, ou
   autoriser l'execution uniquement dans le processus courant si souhaite.
-- `npm.ps1` bloque : remplacer `npm` par `npm.cmd`. Le script d'installation
-  utilise deja `npm.cmd`.
+- `npm.ps1` bloque : remplacer `npm` par `npm.cmd` dans les commandes manuelles.
+  Le lanceur appelle directement le programme npm fourni avec Node sous Windows.
 - `node:sqlite` absent : verifier `node --version`, installer Node >=22.13.
 - `py -3.12` absent : `py --list-paths` puis installer Python 3.12 x64.
 - Erreur de DLL OpenCV/PyTorch : installer le redistribuable Microsoft Visual
